@@ -38,12 +38,89 @@ const (
 	indexFile = "gauge.idx"
 )
 
+type specDoc struct {
+	Id           string
+	heading      string
+	contextSteps []string
+	comments     []string
+	tags         []string
+	scenarios    []*scenarioDoc
+}
+
+type scenarioDoc struct {
+	id       string
+	heading  string
+	steps    []string
+	comments []string
+	tags     []string
+}
+
+func (d *specDoc) Type() string {
+	return "spec"
+}
+
+func (d *scenarioDoc) Type() string {
+	return "scenario"
+}
+
+func newSpecDoc(s *gauge.Specification) *specDoc {
+	id, err := filepath.Rel(config.ProjectRoot, s.FileName)
+	if err != nil {
+		logger.Errorf("Unable to get relative path for %s. %s", s.FileName, err)
+		return nil
+	}
+
+	specDoc := &specDoc{
+		Id:           id,
+		heading:      s.Heading.Value,
+		contextSteps: make([]string, 0),
+		comments:     make([]string, 0),
+	}
+
+	if s.Tags != nil {
+		specDoc.tags = s.Tags.Values
+	}
+
+	for _, step := range s.Contexts {
+		specDoc.contextSteps = append(specDoc.contextSteps, step.Value)
+	}
+
+	for _, comment := range s.Comments {
+		specDoc.comments = append(specDoc.comments, comment.Value)
+	}
+
+	// for _, scn := range s.Scenarios {
+	// 	scnID := fmt.Sprintf("%s:%d", id, scn.Heading.LineNo)
+	// 	scnDoc := &scenarioDoc{
+	// 		id:       scnID,
+	// 		heading:  scn.Heading.Value,
+	// 		steps:    make([]string, 0),
+	// 		comments: make([]string, 0),
+	// 	}
+	// 	if scn.Tags != nil {
+	// 		scnDoc.tags = scn.Tags.Values
+	// 	}
+
+	// 	for _, comment := range scn.Comments {
+	// 		scnDoc.comments = append(scnDoc.comments, comment.Value)
+	// 	}
+
+	// 	for _, step := range scn.Steps {
+	// 		scnDoc.steps = append(scnDoc.steps, step.Value)
+	// 	}
+
+	// 	specDoc.scenarios = append(specDoc.scenarios, scnDoc)
+	// }
+
+	return specDoc
+}
+
 func Search(q string) {
 	indexPath := filepath.Join(config.ProjectRoot, dotGauge, indexFile)
 	index, err := createOrOpenIndex(indexPath)
 
 	if err != nil {
-		logger.Warning("Unable to open index : %s. %s", indexPath, err)
+		logger.Warningf("Unable to open index : %s. %s", indexPath, err)
 	}
 
 	query := bleve.NewMatchQuery(q)
@@ -64,43 +141,24 @@ func Initialize(specs *gauge.SpecCollection) {
 	gaugeIndex, err := createOrOpenIndex(indexPath)
 
 	if err != nil {
-		logger.Warning("Unable to open index : %s. %s", indexPath, err)
+		logger.Warningf("Unable to open index : %s. %s", indexPath, err)
 	}
 
 	wg := &sync.WaitGroup{}
 	wg.Add(specs.Size())
-	logger.Info("Indexing %d specs", specs.Size())
+	logger.Infof("Indexing %d specs", specs.Size())
 	for _, spec := range specs.Specs() {
-		logger.Info("Indexing %s", spec.FileName)
-		go indexSpec(gaugeIndex, spec, wg)
+		logger.Infof("Indexing %s", spec.FileName)
+		go func(s *gauge.Specification) {
+			gaugeIndex.Index("id", newSpecDoc(s))
+			wg.Done()
+		}(spec)
 	}
 	wg.Wait()
 
 	json, _ := gaugeIndex.Stats().MarshalJSON()
-	logger.Info(string(json))
+	logger.Infof(string(json))
 	gaugeIndex.Close()
-}
-
-func indexSpec(index bleve.Index, spec *gauge.Specification, wg *sync.WaitGroup) {
-	specID, err := filepath.Rel(config.ProjectRoot, spec.FileName)
-	if err != nil {
-		logger.Errorf("Unable to get relative path for %s. %s", spec.FileName, err)
-	}
-
-	err = index.Index(specID, spec)
-	if err != nil {
-		logger.Errorf("Unable to index %s. %s", spec.FileName, err)
-	}
-
-	for _, scn := range spec.Scenarios {
-		scnID := fmt.Sprintf("%s:%d", specID, scn.Heading.LineNo)
-		logger.Info("Indexing scenario %s", scnID)
-		err = index.Index(scnID, scn)
-		if err != nil {
-			logger.Errorf("Unable to index %s. %s", scnID, err)
-		}
-	}
-	wg.Done()
 }
 
 func createOrOpenIndex(indexPath string) (bleve.Index, error) {
@@ -119,24 +177,21 @@ func buildIndexMapping() mapping.IndexMapping {
 	englishTextFieldMapping := bleve.NewTextFieldMapping()
 	englishTextFieldMapping.Analyzer = standard.Name
 
-	// a generic reusable mapping for keyword text
 	keywordFieldMapping := bleve.NewTextFieldMapping()
 	keywordFieldMapping.Analyzer = keyword.Name
 
 	indexMapping := bleve.NewIndexMapping()
 
-	scenarioMapping := bleve.NewDocumentStaticMapping()
-	scenarioMapping.AddFieldMappingsAt("Heading.Value", englishTextFieldMapping)
-	scenarioMapping.AddFieldMappingsAt("Tags", keywordFieldMapping)
+	// scenarioMapping := bleve.NewDocumentStaticMapping()
+	// scenarioMapping.AddFieldMappingsAt("heading", englishTextFieldMapping)
+	// scenarioMapping.AddFieldMappingsAt("tags", keywordFieldMapping)
 
 	specMapping := bleve.NewDocumentStaticMapping()
-	specMapping.AddFieldMappingsAt("Heading.Value", englishTextFieldMapping)
-	specMapping.AddFieldMappingsAt("Tags", keywordFieldMapping)
+	specMapping.AddFieldMappingsAt("heading", englishTextFieldMapping)
+	specMapping.AddFieldMappingsAt("tags", keywordFieldMapping)
 
-	// specMapping.AddSubDocumentMapping("Scenarios", scenarioMapping)
-
-	indexMapping.AddDocumentMapping("Specification", specMapping)
-	indexMapping.AddDocumentMapping("Scenario", scenarioMapping)
+	// specMapping.AddSubDocumentMapping("scenarios", scenarioMapping)
+	indexMapping.AddDocumentMapping("spec", specMapping)
 
 	return indexMapping
 }
