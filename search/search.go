@@ -39,20 +39,19 @@ const (
 )
 
 type specDoc struct {
-	Id           string
-	heading      string
-	contextSteps []string
-	comments     []string
-	tags         []string
-	scenarios    []*scenarioDoc
+	Id      string
+	Heading string
+	Context []string
+	Comment []string
+	Tag     []string
 }
 
 type scenarioDoc struct {
-	id       string
-	heading  string
-	steps    []string
-	comments []string
-	tags     []string
+	Id      string
+	Heading string
+	Step    []string
+	Comment []string
+	Tag     []string
 }
 
 func (d *specDoc) Type() string {
@@ -71,48 +70,48 @@ func newSpecDoc(s *gauge.Specification) *specDoc {
 	}
 
 	specDoc := &specDoc{
-		Id:           id,
-		heading:      s.Heading.Value,
-		contextSteps: make([]string, 0),
-		comments:     make([]string, 0),
+		Id:      id,
+		Heading: s.Heading.Value,
+		Context: make([]string, 0),
+		Comment: make([]string, 0),
 	}
 
 	if s.Tags != nil {
-		specDoc.tags = s.Tags.Values
+		specDoc.Tag = s.Tags.Values
 	}
 
 	for _, step := range s.Contexts {
-		specDoc.contextSteps = append(specDoc.contextSteps, step.Value)
+		fmt.Println(step.Value)
+		specDoc.Context = append(specDoc.Context, step.Value)
 	}
 
 	for _, comment := range s.Comments {
-		specDoc.comments = append(specDoc.comments, comment.Value)
+		specDoc.Comment = append(specDoc.Comment, comment.Value)
 	}
 
-	// for _, scn := range s.Scenarios {
-	// 	scnID := fmt.Sprintf("%s:%d", id, scn.Heading.LineNo)
-	// 	scnDoc := &scenarioDoc{
-	// 		id:       scnID,
-	// 		heading:  scn.Heading.Value,
-	// 		steps:    make([]string, 0),
-	// 		comments: make([]string, 0),
-	// 	}
-	// 	if scn.Tags != nil {
-	// 		scnDoc.tags = scn.Tags.Values
-	// 	}
-
-	// 	for _, comment := range scn.Comments {
-	// 		scnDoc.comments = append(scnDoc.comments, comment.Value)
-	// 	}
-
-	// 	for _, step := range scn.Steps {
-	// 		scnDoc.steps = append(scnDoc.steps, step.Value)
-	// 	}
-
-	// 	specDoc.scenarios = append(specDoc.scenarios, scnDoc)
-	// }
-
 	return specDoc
+}
+
+func newScenarioDoc(scn *gauge.Scenario, filename string) *scenarioDoc {
+	scnID := fmt.Sprintf("%s:%d", filename, scn.Heading.LineNo)
+	scnDoc := &scenarioDoc{
+		Id:      scnID,
+		Heading: scn.Heading.Value,
+		Step:    make([]string, 0),
+		Comment: make([]string, 0),
+	}
+	if scn.Tags != nil {
+		scnDoc.Tag = scn.Tags.Values
+	}
+
+	for _, comment := range scn.Comments {
+		scnDoc.Comment = append(scnDoc.Comment, comment.Value)
+	}
+
+	for _, step := range scn.Steps {
+		scnDoc.Step = append(scnDoc.Step, step.Value)
+	}
+	return scnDoc
 }
 
 func Search(q string) {
@@ -124,7 +123,9 @@ func Search(q string) {
 	}
 
 	query := bleve.NewMatchQuery(q)
+	tagsFacet := bleve.NewFacetRequest("Tag", 5)
 	search := bleve.NewSearchRequest(query)
+	search.AddFacet("tags", tagsFacet)
 	search.Highlight = bleve.NewHighlight()
 	searchResults, err := index.Search(search)
 
@@ -150,9 +151,18 @@ func Initialize(specs *gauge.SpecCollection) {
 	for _, spec := range specs.Specs() {
 		logger.Infof("Indexing %s", spec.FileName)
 		go func(s *gauge.Specification) {
-			gaugeIndex.Index("id", newSpecDoc(s))
+			d := newSpecDoc(s)
+			gaugeIndex.Index(d.Id, d)
 			wg.Done()
 		}(spec)
+		wg.Add(len(spec.Scenarios))
+		for _, scn := range spec.Scenarios {
+			go func(s *gauge.Scenario, f string) {
+				d := newScenarioDoc(s, f)
+				gaugeIndex.Index(d.Id, d)
+				wg.Done()
+			}(scn, spec.FileName)
+		}
 	}
 	wg.Wait()
 
@@ -182,16 +192,17 @@ func buildIndexMapping() mapping.IndexMapping {
 
 	indexMapping := bleve.NewIndexMapping()
 
-	// scenarioMapping := bleve.NewDocumentStaticMapping()
-	// scenarioMapping.AddFieldMappingsAt("heading", englishTextFieldMapping)
-	// scenarioMapping.AddFieldMappingsAt("tags", keywordFieldMapping)
+	scenarioMapping := bleve.NewDocumentMapping()
+	scenarioMapping.AddFieldMappingsAt("Heading", englishTextFieldMapping)
+	scenarioMapping.AddFieldMappingsAt("Tag", keywordFieldMapping)
 
-	specMapping := bleve.NewDocumentStaticMapping()
-	specMapping.AddFieldMappingsAt("heading", englishTextFieldMapping)
-	specMapping.AddFieldMappingsAt("tags", keywordFieldMapping)
+	specMapping := bleve.NewDocumentMapping()
+	specMapping.AddFieldMappingsAt("Heading", englishTextFieldMapping)
+	specMapping.AddFieldMappingsAt("Tag", keywordFieldMapping)
 
 	// specMapping.AddSubDocumentMapping("scenarios", scenarioMapping)
 	indexMapping.AddDocumentMapping("spec", specMapping)
+	indexMapping.AddDocumentMapping("scenario", scenarioMapping)
 
 	return indexMapping
 }
