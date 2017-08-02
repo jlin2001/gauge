@@ -30,6 +30,7 @@ import (
 	"github.com/getgauge/gauge/execution/stream"
 	"github.com/getgauge/gauge/filter"
 	"github.com/getgauge/gauge/formatter"
+	"github.com/getgauge/gauge/generation"
 	"github.com/getgauge/gauge/logger"
 	"github.com/getgauge/gauge/order"
 	"github.com/getgauge/gauge/plugin"
@@ -72,6 +73,7 @@ var workingDir = flag.String([]string{"-dir"}, ".", "Set the working directory f
 var strategy = flag.String([]string{"-strategy"}, "lazy", "[DEPRECATED] This usage will be removed soon. Parallel execution uses lazy strategy.")
 var sort = flag.Bool([]string{"-sort", "s"}, false, "[DEPRECATED] Use gauge run -s specs")
 var validate = flag.Bool([]string{"-validate", "-check"}, false, "[DEPRECATED] Use gauge validate specs")
+var generate = flag.Bool([]string{"-generate"}, false, "[DEPRECATED] Use gauge generate specs")
 var updateAll = flag.Bool([]string{"-update-all"}, false, "[DEPRECATED] Use gauge update -a")
 var checkUpdates = flag.Bool([]string{"-check-updates"}, false, "[DEPRECATED] Use gauge update -c")
 var listTemplates = flag.Bool([]string{"-list-templates"}, false, "[DEPRECATED] Use gauge list-templates")
@@ -160,7 +162,11 @@ func main() {
 			formatter.FormatSpecFilesIn(*specFilesToFormat)
 		} else if *validate {
 			track.Validation()
+			fmt.Println("validate")
 			validation.Validate(flag.Args())
+		} else if *generate {
+			track.Generation()
+			generation.Generate(flag.Args())
 		} else if *docs != "" {
 			track.Docs(*docs)
 			gaugeConnectionHandler := api.Start(specDirs)
